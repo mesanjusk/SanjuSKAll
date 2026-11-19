@@ -1,0 +1,4 @@
+import Link from "next/link";
+import {ArrowUpRight,LayoutDashboard,Menu} from "lucide-react";
+import {Brand} from "@/components/brand";
+export function Nav(){return <header className="nav"><div className="shell nav-inner"><Brand/><nav className="nav-links"><Link href="/#features">Features</Link><Link href="/pricing">Pricing</Link><Link href="/tracking">Track shipment</Link></nav><div className="nav-actions"><Link className="login-link" href="/login">Sign in</Link><Link className="button button-dark button-sm" href="/register">Start shipping <ArrowUpRight size={16}/></Link></div><details className="mobile-menu"><summary aria-label="Menu"><Menu size={23}/></summary><div className="mobile-menu-panel"><Link href="/#features">Features</Link><Link href="/pricing">Pricing</Link><Link href="/tracking">Tracking</Link><Link href="/login">Login</Link><Link href="/dashboard"><LayoutDashboard size={16}/> Dashboard</Link></div></details></div></header>}

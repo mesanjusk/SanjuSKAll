@@ -1,0 +1,3 @@
+import Link from "next/link";
+import {Brand} from "@/components/brand";
+export function Footer(){return <footer className="footer"><div className="shell footer-inner"><div><Brand small/><p>A smarter shipping workspace for Indian businesses.<br/>Built to connect with authorized courier networks.</p></div><div className="footer-links"><Link href="/tracking">Track</Link><Link href="/pricing">Pricing</Link><Link href="/login">Merchant login</Link></div></div><div className="shell footer-base"><span>© {new Date().getFullYear()} SK Ship. All rights reserved.</span><span>Preview platform · Courier integrations pending</span></div></footer>}
