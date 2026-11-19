@@ -15,7 +15,7 @@ export async function rateLimited(request:NextRequest, action:string, max=12): P
   const db=await getDb();
   const windowStart=Math.floor(Date.now()/600000)*600000;
   const key=`${action}:${ip}:${windowStart}`;
-  const result=await db.collection("rate_limits").findOneAndUpdate(
+  const result=await db.collection<{_id:string;count:number;expiresAt:Date}>("rate_limits").findOneAndUpdate(
     {_id:key},{$inc:{count:1},$setOnInsert:{expiresAt:new Date(windowStart+1200000)}},
     {upsert:true,returnDocument:"after"});
   return Number(result?.count||0)>max;
