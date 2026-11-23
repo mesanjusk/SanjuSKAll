@@ -194,8 +194,20 @@ final class RemoteServer {
                 json(out,200,statusOnUi());return;
             }
             if("POST".equals(r.method)&&"/api/command".equals(r.path)){
-                JSONObject cmd=from(r);main.post(()->activity.command(cmd));
-                json(out,200,"{\"ok\":true}");return;
+                JSONObject cmd=from(r);
+                CountDownLatch done=new CountDownLatch(1);
+                final String[] appliedStatus={"{}"};
+                main.post(()->{
+                    try{
+                        activity.command(cmd);
+                        appliedStatus[0]=activity.statusJson().toString();
+                    }finally{done.countDown();}
+                });
+                if(!done.await(4,TimeUnit.SECONDS)){
+                    json(out,500,"{\"error\":\"TV did not apply command\"}");
+                    return;
+                }
+                json(out,200,appliedStatus[0]);return;
             }
             if("POST".equals(r.method)&&"/api/upload".equals(r.path)){upload(r,out);return;}
             if("POST".equals(r.method)&&"/api/delete".equals(r.path)){
