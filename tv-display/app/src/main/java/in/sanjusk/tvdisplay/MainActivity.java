@@ -5,6 +5,9 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
+import android.graphics.SurfaceTexture;
+import android.media.MediaPlayer;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
@@ -14,6 +17,8 @@ import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -46,7 +51,10 @@ public class MainActivity extends Activity {
     private FrameLayout root,canvas;
     private LinearLayout panel;
     private ImageView image;
-    private VideoView video;
+    private TextureView video;
+    private MediaPlayer mediaPlayer;
+    private Uri currentVideoUri;
+    private boolean videoPrepared=false;
     private TextView heading,details;
     private int position=0, rotation=0, seconds=8;
     private boolean playing=true,shuffle=false,cover=false;
@@ -106,7 +114,19 @@ public class MainActivity extends Activity {
         root.addView(canvas,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));
         image=new ImageView(this);image.setBackgroundColor(Color.BLACK);
         image.setScaleType(cover?ImageView.ScaleType.CENTER_CROP:ImageView.ScaleType.FIT_CENTER);
-        video=new VideoView(this);video.setVisibility(View.GONE);
+        video=new TextureView(this);video.setVisibility(View.GONE);
+        video.setSurfaceTextureListener(new TextureView.SurfaceTextureListener(){
+            @Override public void onSurfaceTextureAvailable(SurfaceTexture texture,int width,int height){
+                if(video.getVisibility()==View.VISIBLE && currentVideoUri!=null) startVideo();
+            }
+            @Override public void onSurfaceTextureSizeChanged(SurfaceTexture texture,int width,int height){
+                updateVideoScaling();
+            }
+            @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture texture){
+                releaseVideo();return true;
+            }
+            @Override public void onSurfaceTextureUpdated(SurfaceTexture texture){}
+        });
         canvas.addView(image,new FrameLayout.LayoutParams(-1,-1));
         canvas.addView(video,new FrameLayout.LayoutParams(-1,-1));
         panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);
@@ -122,7 +142,8 @@ public class MainActivity extends Activity {
             button("Refresh Files",()->refresh(true)),
             button("Hide Menu",()->panel.setVisibility(View.GONE)));
         FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);
-        canvas.addView(panel,lp);
+        // Keep controls horizontal while the media rotates in portrait mode.
+        root.addView(panel,lp);
         setContentView(root);
         panel.getChildAt(2).requestFocus();
     }
@@ -151,7 +172,7 @@ public class MainActivity extends Activity {
         position=0;
         for(int i=0;i<playlist.size();i++) if(playlist.get(i).key().equals(current)){position=i;break;}
         if(start || playlist.isEmpty()) playCurrent();
-        else if(playing && !video.isPlaying()) playCurrent();
+        else if(playing && (video.getVisibility()!=View.VISIBLE || mediaPlayer==null)) playCurrent();
         updateLabels();
     }
     void mediaChanged(){runOnUiThread(()->refresh(true));}
@@ -164,6 +185,7 @@ public class MainActivity extends Activity {
         canvas.setLayoutParams(p);
         canvas.setPivotX((turn?h:w)/2f);canvas.setPivotY((turn?w:h)/2f);
         canvas.setRotation(rotation);
+        video.post(this::updateVideoScaling);
         updateLabels();
     }
     private void setRotation(int degrees){
@@ -174,6 +196,7 @@ public class MainActivity extends Activity {
     private void setFit(boolean fill){
         cover=fill;prefs.edit().putBoolean("cover",fill).apply();
         image.setScaleType(fill?ImageView.ScaleType.CENTER_CROP:ImageView.ScaleType.FIT_CENTER);
+        updateVideoScaling();
         updateLabels();
     }
     private void loadImage(Uri uri)throws Exception{
@@ -188,9 +211,56 @@ public class MainActivity extends Activity {
             image.setImageBitmap(bitmap);
         }
     }
+    private void releaseVideo(){
+        videoPrepared=false;
+        if(mediaPlayer!=null){
+            try{mediaPlayer.reset();}catch(Exception ignored){}
+            try{mediaPlayer.release();}catch(Exception ignored){}
+            mediaPlayer=null;
+        }
+    }
+    private void startVideo(){
+        if(currentVideoUri==null || video==null || !video.isAvailable()) return;
+        releaseVideo();
+        Uri uri=currentVideoUri;
+        try{
+            MediaPlayer mp=new MediaPlayer();
+            mediaPlayer=mp;
+            mp.setDataSource(this,uri);
+            Surface surface=new Surface(video.getSurfaceTexture());
+            try{mp.setSurface(surface);}finally{surface.release();}
+            mp.setOnPreparedListener(ready->{
+                if(mediaPlayer!=ready)return;
+                videoPrepared=true;
+                updateVideoScaling();
+                if(playing)ready.start();
+            });
+            mp.setOnVideoSizeChangedListener((player,w,h)->updateVideoScaling());
+            mp.setOnCompletionListener(done->{if(mediaPlayer==done)step(1);});
+            mp.setOnErrorListener((bad,what,extra)->{
+                if(mediaPlayer==bad)handler.postDelayed(()->step(1),500);
+                return true;
+            });
+            mp.prepareAsync();
+        }catch(Exception e){
+            handler.postDelayed(()->step(1),500);
+        }
+    }
+    private void updateVideoScaling(){
+        if(video==null||mediaPlayer==null||!videoPrepared)return;
+        int vw=video.getWidth(),vh=video.getHeight();
+        int mediaW=mediaPlayer.getVideoWidth(),mediaH=mediaPlayer.getVideoHeight();
+        if(vw<=0||vh<=0||mediaW<=0||mediaH<=0)return;
+        float scaleX=(float)vw/mediaW,scaleY=(float)vh/mediaH;
+        float factor=cover?Math.max(scaleX,scaleY):Math.min(scaleX,scaleY);
+        Matrix transform=new Matrix();
+        transform.setScale(mediaW*factor/vw,mediaH*factor/vh,vw/2f,vh/2f);
+        video.setTransform(transform);
+    }
     private void playCurrent(){
         handler.removeCallbacks(imageAdvance);
-        try{video.stopPlayback();}catch(Exception ignored){}
+        releaseVideo();
+        currentVideoUri=null;
         video.setVisibility(View.GONE);
         if(playlist.isEmpty()){
             image.setImageDrawable(null);
@@ -201,10 +271,8 @@ public class MainActivity extends Activity {
         playing=true;
         if(item.video){
             image.setVisibility(View.GONE);video.setVisibility(View.VISIBLE);
-            video.setOnCompletionListener(mp->step(1));
-            video.setOnErrorListener((mp,what,extra)->{handler.postDelayed(()->step(1),500);return true;});
-            try {video.setVideoURI(item.uri);video.start();}
-            catch(Exception e){handler.postDelayed(()->step(1),500);}
+            currentVideoUri=item.uri;
+            if(video.isAvailable()) startVideo();
         }else{
             image.setVisibility(View.VISIBLE);
             try{loadImage(item.uri);}catch(Exception e){image.setImageDrawable(null);}
@@ -214,13 +282,13 @@ public class MainActivity extends Activity {
     }
     private void pause(){
         playing=false;handler.removeCallbacks(imageAdvance);
-        if(video.getVisibility()==View.VISIBLE)video.pause();
+        if(video.getVisibility()==View.VISIBLE && mediaPlayer!=null && videoPrepared)mediaPlayer.pause();
         updateLabels();
     }
     private void resume(){
         if(playlist.isEmpty()){refresh(true);return;}
         playing=true;
-        if(video.getVisibility()==View.VISIBLE)video.start();
+        if(video.getVisibility()==View.VISIBLE && mediaPlayer!=null && videoPrepared)mediaPlayer.start();
         else handler.postDelayed(imageAdvance,seconds*1000L);
         updateLabels();
     }
@@ -272,6 +340,8 @@ public class MainActivity extends Activity {
             obj.put("device","SK Digital TV Display");
             obj.put("ip",lanIp());obj.put("port",8765);
             obj.put("playing",playing);obj.put("rotation",rotation);
+            obj.put("actualRotation",(int)canvas.getRotation());
+            obj.put("mediaType",playlist.isEmpty()?"none":playlist.get(Math.min(position,playlist.size()-1)).video?"video":"image");
             obj.put("seconds",seconds);obj.put("cover",cover);obj.put("shuffle",shuffle);
             obj.put("position",position);obj.put("total",playlist.size());
             obj.put("name",playlist.isEmpty()?"":playlist.get(position).name);
@@ -330,7 +400,7 @@ public class MainActivity extends Activity {
     @Override protected void onDestroy(){
         handler.removeCallbacksAndMessages(null);
         if(server!=null)server.stop();
-        try{video.stopPlayback();}catch(Exception ignored){}
+        releaseVideo();
         super.onDestroy();
     }
 }
