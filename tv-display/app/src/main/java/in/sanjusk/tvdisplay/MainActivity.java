@@ -42,7 +42,7 @@ public class MainActivity extends Activity {
     private static final int PICK_FOLDER=41;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final SecureRandom random=new SecureRandom();
-    private final Runnable imageAdvance=()->{if(playing)step(1);};
+    private final Runnable imageAdvance=()->{if(MainActivity.this.playing)step(1);};
     private final List<Integer> history=new ArrayList<>();
     private int historyCursor=-1;
     private long imageDeadline=0L;
