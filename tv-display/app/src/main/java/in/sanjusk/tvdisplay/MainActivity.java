@@ -62,6 +62,7 @@ public class MainActivity extends Activity {
     private TextView heading,details;
     private int position=0, rotation=0, seconds=8;
     private boolean playing=true,shuffle=false,cover=false;
+    private String lastControl="ready", lastControlMessage="";
 
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
@@ -118,10 +119,12 @@ public class MainActivity extends Activity {
         root.addView(canvas,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));
         image=new ImageView(this);image.setBackgroundColor(Color.BLACK);
         image.setScaleType(cover?ImageView.ScaleType.CENTER_CROP:ImageView.ScaleType.FIT_CENTER);
-        video=new TextureView(this);video.setVisibility(View.GONE);
+        // Keep TextureView mounted; many TV devices recreate or lose the codec surface
+        // when its view is frequently toggled GONE/VISIBLE.
+        video=new TextureView(this);video.setAlpha(0f);
         video.setSurfaceTextureListener(new TextureView.SurfaceTextureListener(){
             @Override public void onSurfaceTextureAvailable(SurfaceTexture texture,int width,int height){
-                if(video.getVisibility()==View.VISIBLE && currentVideoUri!=null) startVideo();
+                if(currentVideoUri!=null) startVideo();
             }
             @Override public void onSurfaceTextureSizeChanged(SurfaceTexture texture,int width,int height){
                 updateVideoScaling();
@@ -243,7 +246,7 @@ public class MainActivity extends Activity {
                 if(playing)ready.start();
             });
             mp.setOnVideoSizeChangedListener((player,w,h)->updateVideoScaling());
-            mp.setOnCompletionListener(done->{if(mediaPlayer==done)step(1);});
+            mp.setOnCompletionListener(done->{if(mediaPlayer==done && playing)step(1);});
             mp.setOnErrorListener((bad,what,extra)->{
                 if(mediaPlayer==bad){
                     handler.postDelayed(()->{
@@ -281,7 +284,7 @@ public class MainActivity extends Activity {
         imageRemainingMs=seconds*1000L;
         releaseVideo();
         currentVideoUri=null;
-        video.setVisibility(View.GONE);
+        video.setAlpha(0f);
         if(playlist.isEmpty()){
             image.setImageDrawable(null);
             playing=false;showPanel();updateLabels();return;
@@ -290,7 +293,7 @@ public class MainActivity extends Activity {
         MediaLibrary.Item item=playlist.get(position);
         // Changing slides must NOT cancel a user's pause.
         if(item.video){
-            image.setVisibility(View.GONE);video.setVisibility(View.VISIBLE);
+            image.setVisibility(View.GONE);video.setAlpha(1f);
             currentVideoUri=item.uri;
             if(video.isAvailable())startVideo();
         }else{
@@ -303,7 +306,7 @@ public class MainActivity extends Activity {
     private void pause(){
         if(!playing)return;
         playing=false;
-        if(video.getVisibility()==View.VISIBLE){
+        if(currentVideoUri!=null){
             if(mediaPlayer!=null && videoPrepared)try{mediaPlayer.pause();}catch(Exception ignored){}
         }else{
             imageRemainingMs=Math.max(100,imageDeadline-android.os.SystemClock.uptimeMillis());
@@ -319,7 +322,7 @@ public class MainActivity extends Activity {
         }
         if(playing)return;
         playing=true;
-        if(video.getVisibility()==View.VISIBLE){
+        if(currentVideoUri!=null){
             if(mediaPlayer!=null && videoPrepared){
                 try{mediaPlayer.start();}catch(Exception e){startVideo();}
             }else if(mediaPlayer==null && currentVideoUri!=null && video.isAvailable())startVideo();
@@ -328,29 +331,46 @@ public class MainActivity extends Activity {
         }
         updateLabels();
     }
+    private void selectIndex(int index){
+        if(playlist.isEmpty()){
+            lastControlMessage="No playable media. Upload 2 or more images or videos.";
+            return;
+        }
+        if(index<0 || index>=playlist.size()){
+            lastControlMessage="That playlist item is not available.";
+            return;
+        }
+        position=index;
+        lastControlMessage=(position+1)+" of "+playlist.size()+": "+playlist.get(position).name;
+        playCurrent();
+    }
     private void step(int delta){
-        if(playlist.isEmpty())return;
-        if(shuffle && playlist.size()>1){
+        if(playlist.size()<2){
+            lastControlMessage=playlist.isEmpty()
+                ?"No playable media. Upload at least two images or videos."
+                :"Only one playable file found. Add a second image/video or refresh files.";
+            updateLabels();
+            return;
+        }
+        int nextIndex=(position+delta+playlist.size())%playlist.size();
+        if(shuffle){
             if(delta<0 && historyCursor>0){
-                position=history.get(--historyCursor);
-            }else if(delta>0 && historyCursor<history.size()-1){
-                position=history.get(++historyCursor);
+                nextIndex=history.get(--historyCursor);
+            }else if(delta>0 && historyCursor>=0 && historyCursor<history.size()-1){
+                nextIndex=history.get(++historyCursor);
             }else if(delta>0){
                 if(historyCursor<0){history.add(position);historyCursor=0;}
-                int next=position;
-                while(next==position)next=random.nextInt(playlist.size());
-                position=next;
-                history.add(position);
-                historyCursor++;
+                int pick=position;
+                while(pick==position)pick=random.nextInt(playlist.size());
+                nextIndex=pick;
+                history.add(nextIndex);historyCursor++;
                 if(history.size()>1000){history.remove(0);historyCursor--;}
             }else{
-                // No earlier shuffled item: preserve current item.
-                return;
+                if(historyCursor<0){history.add(position);historyCursor=0;}
+                history.add(0,nextIndex);historyCursor=0;
             }
-        }else{
-            position=(position+delta+playlist.size())%playlist.size();
         }
-        playCurrent();
+        selectIndex(nextIndex);
     }
     private void showPanel(){
         if(panel==null)return;
@@ -393,6 +413,7 @@ public class MainActivity extends Activity {
             obj.put("mediaType",playlist.isEmpty()?"none":playlist.get(Math.min(position,playlist.size()-1)).video?"video":"image");
             obj.put("seconds",seconds);obj.put("cover",cover);obj.put("shuffle",shuffle);
             obj.put("position",position);obj.put("total",playlist.size());
+            obj.put("lastControl",lastControl);obj.put("lastControlMessage",lastControlMessage);
             obj.put("name",playlist.isEmpty()?"":playlist.get(position).name);
             JSONArray arr=new JSONArray();
             for(MediaLibrary.Item item:playlist){
@@ -404,16 +425,22 @@ public class MainActivity extends Activity {
     }
     void command(JSONObject o){
         String action=o.optString("action"), value=o.optString("value");
+        lastControl=action;
+        lastControlMessage="";
         switch(action){
-            case "play":resume();break;
-            case "pause":pause();break;
+            case "play":resume();lastControlMessage="Playback resumed";break;
+            case "pause":pause();lastControlMessage="Playback paused";break;
             case "next":step(1);break;
             case "prev":step(-1);break;
+            case "select":
+                selectIndex(o.optInt("index",-1));
+                history.clear();historyCursor=-1;
+                break;
             case "rotate":
                 try{setRotation(Integer.parseInt(value));}catch(Exception ignored){}
                 break;
             case "duration":
-                try{seconds=Math.min(120,Math.max(2,Integer.parseInt(value)));prefs.edit().putInt("seconds",seconds).apply();if(video.getVisibility()!=View.VISIBLE)scheduleImageAdvance(seconds*1000L);}catch(Exception ignored){}
+                try{seconds=Math.min(120,Math.max(2,Integer.parseInt(value)));prefs.edit().putInt("seconds",seconds).apply();if(currentVideoUri==null)scheduleImageAdvance(seconds*1000L);}catch(Exception ignored){}
                 break;
             case "fit":setFit("cover".equals(value));break;
             case "shuffle":
