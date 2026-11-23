@@ -8,7 +8,7 @@ h1{font-size:23px;margin:0}h2{font-size:17px;margin:0 0 13px}.tag{color:#9ea9cd;
 header{padding:26px 2px 15px;display:flex;align-items:center;justify-content:space-between}
 section{background:#171f38;border:1px solid #283555;border-radius:17px;padding:18px;margin:12px 0}
 button,select,input{font:inherit}button{border:0;border-radius:11px;background:#414cc0;color:white;padding:12px 14px;cursor:pointer;font-weight:600;min-height:44px}
-button.secondary{background:#2c3655}button.danger{background:#7c2e45}button:disabled{opacity:.5}
+button.secondary{background:#2c3655}button.secondary.active{background:#6a5bec;outline:2px solid #bdc2ff}button.danger{background:#7c2e45}button:disabled{opacity:.5}
 input,select{border:1px solid #516081;border-radius:11px;background:#10192e;color:white;min-height:43px;padding:10px;width:100%}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.triple{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.grow{flex:1}
@@ -33,10 +33,12 @@ label{display:block;color:#cbd6ef;font-size:14px;margin:12px 0 6px}
 <section><h2>Now displaying</h2><div id="nowPlaying" style="font-size:17px;font-weight:650;overflow-wrap:anywhere">—</div><div id="state"></div>
 <div class="triple"><button onclick="command('prev')">◀ Prev</button><button id="playButton" onclick="togglePlay()">Pause</button><button onclick="command('next')">Next ▶</button></div>
 </section>
-<section><h2>Display settings</h2><label>Content rotation (to match physical TV position)</label><div class="triple">
-<button class="secondary" onclick="command('rotate','0')">0°</button>
-<button class="secondary" onclick="command('rotate','90')">90°</button>
-<button class="secondary" onclick="command('rotate','270')">270°</button></div>
+<section><h2>Display settings</h2><label>Content rotation (to match physical TV position)</label><div class="grid">
+<button data-rotation="0" class="secondary" onclick="command('rotate','0')">Normal 0°</button>
+<button data-rotation="90" class="secondary" onclick="command('rotate','90')">Portrait 90° ↻</button>
+<button data-rotation="270" class="secondary" onclick="command('rotate','270')">Portrait 270° ↺</button>
+<button data-rotation="180" class="secondary" onclick="command('rotate','180')">Upside-down 180°</button></div>
+<p class="muted">These controls rotate the photos and videos on your TV, not the TV home screen. Use a photo to test the direction.</p>
 <label for="duration">Image slideshow duration</label><select id="duration" onchange="command('duration',this.value)">
 <option value="3">3 seconds</option><option value="5">5 seconds</option><option value="8">8 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">60 seconds</option></select>
 <label>Image scaling</label><div class="grid"><button class="secondary" onclick="command('fit','contain')">Fit whole image</button><button class="secondary" onclick="command('fit','cover')">Fill / crop image</button></div>
@@ -77,8 +79,16 @@ async function refresh(){
  catch(e){$('connection').textContent='Offline';if(token)console.log(e)}
 }
 async function command(action,value,extra={}){
- try{await api('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,value,...extra})});
- setTimeout(refresh,220);}catch(e){notice(e.message)}
+ try{
+  const applied=await api('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,value,...extra})});
+  if(applied && applied.device){status=applied;render();}
+  else setTimeout(refresh,220);
+  if(action==='rotate'){
+   if(Number(applied.rotation)!==Number(value) || Number(applied.actualRotation)!==Number(value)){
+    notice('Rotation request not confirmed. Try again and check your TV screen.');
+   } else notice('Rotation applied on TV: '+applied.rotation+'°');
+  }
+ }catch(e){notice(e.message)}
 }
 function togglePlay(){command(status.playing?'pause':'play')}
 function toggleShuffle(){command('shuffle',!status.shuffle)}
@@ -88,7 +98,11 @@ function render(){
  $('state').textContent=(status.playing?'▶ Playing':'⏸ Paused')+'  ·  '+status.total+' files  ·  Rotation '+status.rotation+'°';
  $('playButton').textContent=status.playing?'⏸ Pause':'▶ Play';
  $('shuffleButton').textContent='Shuffle: '+(status.shuffle?'On':'Off');
- $('rotationNote').textContent='Current: '+status.rotation+'° · Images: '+(status.cover?'Fill':'Fit')+' · Remote works on the same Wi-Fi.';
+ $('rotationNote').textContent='TV reports: '+status.rotation+'° (display: '+(status.actualRotation??'?')+'°) · Image/video: '+(status.cover?'Fill':'Fit');
+ document.querySelectorAll('[data-rotation]').forEach(b=>{
+  const selected=Number(b.dataset.rotation)===Number(status.rotation);
+  b.classList.toggle('active',selected);b.setAttribute('aria-pressed',selected?'true':'false');
+ });
  if([3,5,8,10,15,30,60].includes(status.seconds))$('duration').value=status.seconds;
  const list=$('mediaList');list.replaceChildren();
  if(!status.playlist||status.playlist.length===0){const p=document.createElement('p');p.className='muted';p.textContent='No files yet. Upload media above, or choose a USB folder on the TV.';list.append(p);return;}
