@@ -245,12 +245,18 @@ public class MainActivity extends Activity {
             mp.setOnVideoSizeChangedListener((player,w,h)->updateVideoScaling());
             mp.setOnCompletionListener(done->{if(mediaPlayer==done)step(1);});
             mp.setOnErrorListener((bad,what,extra)->{
-                if(mediaPlayer==bad)handler.postDelayed(()->step(1),500);
+                if(mediaPlayer==bad){
+                    handler.postDelayed(()->{
+                        if(playing && currentVideoUri!=null && currentVideoUri.equals(uri))step(1);
+                    },500);
+                }
                 return true;
             });
             mp.prepareAsync();
         }catch(Exception e){
-            handler.postDelayed(()->step(1),500);
+            handler.postDelayed(()->{
+                if(playing && currentVideoUri!=null && currentVideoUri.equals(uri))step(1);
+            },500);
         }
     }
     private void updateVideoScaling(){
