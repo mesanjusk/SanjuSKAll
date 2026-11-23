@@ -38,7 +38,7 @@ public class MainActivity extends Activity {
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final SecureRandom random=new SecureRandom();
     private final Runnable imageAdvance=()->step(1);
-    private final Runnable autoHide=()->{if(panel!=null) panel.setVisibility(View.GONE);};
+    private final Runnable autoHide=()->{if(MainActivity.this.panel!=null) MainActivity.this.panel.setVisibility(View.GONE);};
     private SharedPreferences prefs;
     private MediaLibrary library;
     private RemoteServer server;
