@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#111831"><title>SK Digital TV Remote</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#edf2ff;background:#0b1020}
+*{box-sizing:border-box}body{margin:0;padding:0 14px 40px}main{max-width:720px;margin:auto}
+h1{font-size:23px;margin:0}h2{font-size:17px;margin:0 0 13px}.tag{color:#9ea9cd;font-size:13px}
+header{padding:26px 2px 15px;display:flex;align-items:center;justify-content:space-between}
+section{background:#171f38;border:1px solid #283555;border-radius:17px;padding:18px;margin:12px 0}
+button,select,input{font:inherit}button{border:0;border-radius:11px;background:#414cc0;color:white;padding:12px 14px;cursor:pointer;font-weight:600;min-height:44px}
+button.secondary{background:#2c3655}button.danger{background:#7c2e45}button:disabled{opacity:.5}
+input,select{border:1px solid #516081;border-radius:11px;background:#10192e;color:white;min-height:43px;padding:10px;width:100%}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.triple{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.grow{flex:1}
+.muted{color:#abb9d7;font-size:13px}.hidden{display:none!important}
+#state{color:#a7b5d3;font-size:14px;margin:6px 0}
+#pairInput{text-align:center;letter-spacing:.3em;font-size:24px}
+#message{position:sticky;top:5px;border-radius:10px;padding:10px;color:white;background:#374469;display:none;z-index:4}
+.media{display:flex;gap:10px;align-items:center;padding:11px 0;border-top:1px solid #33405b}
+.media:first-child{border:0}.media-name{flex:1;min-width:0;overflow-wrap:anywhere;font-size:14px}
+.media-name small{display:block;color:#aebcd9;margin-top:2px}
+.media button{min-height:32px;padding:7px 9px;font-size:13px;border-radius:8px}
+#uploadInput{margin:7px 0 12px}
+label{display:block;color:#cbd6ef;font-size:14px;margin:12px 0 6px}
+</style></head><body><main>
+<header><div><h1>SK Digital TV</h1><div class="tag">Product display • Mobile remote</div></div><div id="connection" class="tag">Disconnected</div></header>
+<div id="message"></div>
+<section id="pairing"><h2>Connect to your TV</h2><p class="muted">Open this address on the same Wi-Fi as your Android TV. Enter the six-digit PIN shown on the TV screen.</p>
+<label for="pairInput">TV pairing PIN</label><input id="pairInput" type="number" inputmode="numeric" maxlength="6" placeholder="000000">
+<button style="width:100%;margin-top:12px" id="pairButton">Connect securely</button>
+</section>
+<div id="controls" class="hidden">
+<section><h2>Now displaying</h2><div id="nowPlaying" style="font-size:17px;font-weight:650;overflow-wrap:anywhere">—</div><div id="state"></div>
+<div class="triple"><button onclick="command('prev')">◀ Prev</button><button id="playButton" onclick="togglePlay()">Pause</button><button onclick="command('next')">Next ▶</button></div>
+</section>
+<section><h2>Display settings</h2><label>Content rotation (to match physical TV position)</label><div class="triple">
+<button class="secondary" onclick="command('rotate','0')">0°</button>
+<button class="secondary" onclick="command('rotate','90')">90°</button>
+<button class="secondary" onclick="command('rotate','270')">270°</button></div>
+<label for="duration">Image slideshow duration</label><select id="duration" onchange="command('duration',this.value)">
+<option value="3">3 seconds</option><option value="5">5 seconds</option><option value="8">8 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">60 seconds</option></select>
+<label>Image scaling</label><div class="grid"><button class="secondary" onclick="command('fit','contain')">Fit whole image</button><button class="secondary" onclick="command('fit','cover')">Fill / crop image</button></div>
+<label>Playlist</label><div class="grid"><button class="secondary" id="shuffleButton" onclick="toggleShuffle()">Shuffle: Off</button><button class="secondary" onclick="command('refresh')">Refresh media</button></div>
+<p class="muted" id="rotationNote"></p></section>
+<section><h2>Upload from your phone</h2><div class="muted">Photos: JPG, PNG, WEBP · Videos: MP4, M4V, WEBM · Maximum 500 MB per file.</div>
+<input type="file" id="uploadInput" accept=".jpg,.jpeg,.png,.webp,.mp4,.m4v,.webm,image/*,video/mp4,video/webm" multiple>
+<button id="uploadButton" style="width:100%">Add to TV playlist</button><p id="uploadProgress" class="muted"></p></section>
+<section><h2>TV media playlist</h2><div id="mediaList"></div></section>
+<section><button class="secondary" onclick="disconnect()">Disconnect this phone</button>
+<p class="muted">Media uploaded to the TV stays on the TV after your phone disconnects. TV and phone must be on a trusted local network. USB items are read-only.</p></section>
+</div></main>
+<script>
+const $=id=>document.getElementById(id);
+let token=localStorage.getItem('skTvToken')||'',status={};
+function notice(msg){const e=$('message');e.textContent=msg;e.style.display='block';setTimeout(()=>e.style.display='none',4000)}
+async function api(path,options={}){
+ const headers={...(options.headers||{}),'X-Device-Token':token};
+ const response=await fetch(path,{...options,headers});
+ let body={};try{body=await response.json()}catch{}
+ if(!response.ok){if(response.status===401)disconnect();throw Error(body.error||'Request failed')}
+ return body;
+}
+async function pair(){
+ const pin=$('pairInput').value.trim();
+ if(!/^\d{6}$/.test(pin))return notice('Enter the six-digit TV PIN.');
+ try{
+  const response=await fetch('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});
+  const data=await response.json();if(!response.ok)throw Error(data.error||'Wrong PIN');
+  token=data.token;localStorage.setItem('skTvToken',token);showControls();await refresh();
+ }catch(e){notice(e.message)}
+}
+function disconnect(){token='';localStorage.removeItem('skTvToken');$('pairing').classList.remove('hidden');$('controls').classList.add('hidden');$('connection').textContent='Disconnected'}
+function showControls(){$('pairing').classList.add('hidden');$('controls').classList.remove('hidden');$('connection').textContent='Connected'}
+async function refresh(){
+ if(!token)return;
+ try{status=await api('/api/status');showControls();render();}
+ catch(e){$('connection').textContent='Offline';if(token)console.log(e)}
+}
+async function command(action,value,extra={}){
+ try{await api('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,value,...extra})});
+ setTimeout(refresh,220);}catch(e){notice(e.message)}
+}
+function togglePlay(){command(status.playing?'pause':'play')}
+function toggleShuffle(){command('shuffle',!status.shuffle)}
+function render(){
+ $('connection').textContent='Connected';
+ $('nowPlaying').textContent=status.name||'No media loaded';
+ $('state').textContent=(status.playing?'▶ Playing':'⏸ Paused')+'  ·  '+status.total+' files  ·  Rotation '+status.rotation+'°';
+ $('playButton').textContent=status.playing?'⏸ Pause':'▶ Play';
+ $('shuffleButton').textContent='Shuffle: '+(status.shuffle?'On':'Off');
+ $('rotationNote').textContent='Current: '+status.rotation+'° · Images: '+(status.cover?'Fill':'Fit')+' · Remote works on the same Wi-Fi.';
+ if([3,5,8,10,15,30,60].includes(status.seconds))$('duration').value=status.seconds;
+ const list=$('mediaList');list.replaceChildren();
+ if(!status.playlist||status.playlist.length===0){const p=document.createElement('p');p.className='muted';p.textContent='No files yet. Upload media above, or choose a USB folder on the TV.';list.append(p);return;}
+ status.playlist.forEach((item,i)=>{
+  const row=document.createElement('div');row.className='media';
+  const text=document.createElement('div');text.className='media-name';
+  text.textContent=(i===status.position?'▶  ':'')+item.name;
+  const sub=document.createElement('small');sub.textContent=(item.video?'Video':'Image')+' · '+(item.uploaded?'Phone upload':'USB folder');text.append(sub);row.append(text);
+  for(const [label,action,attrs] of [['↑','move',{index:i,direction:'up'}],['↓','move',{index:i,direction:'down'}]]){
+   const b=document.createElement('button');b.textContent=label;b.className='secondary';
+   b.onclick=()=>command(action,null,attrs);row.append(b);
+  }
+  if(item.uploaded){
+   const del=document.createElement('button');del.textContent='Delete';del.className='danger';
+   del.onclick=async()=>{if(!confirm('Delete '+item.name+' from this TV?'))return;
+    try{await api('/api/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:item.name})});await refresh()}
+    catch(e){notice(e.message)}
+   };row.append(del);
+  }
+  list.append(row);
+ });
+}
+async function upload(){
+ const files=[...$('uploadInput').files];if(!files.length)return notice('Select images or videos first.');
+ $('uploadButton').disabled=true;
+ let completed=0;
+ for(const f of files){
+  $('uploadProgress').textContent='Uploading '+(completed+1)+'/'+files.length+': '+f.name;
+  try{
+   await api('/api/upload?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});
+   completed++;
+  }catch(e){notice(f.name+': '+e.message)}
+ }
+ $('uploadProgress').textContent='Uploaded '+completed+' of '+files.length+' files to the TV.';
+ $('uploadButton').disabled=false;$('uploadInput').value='';await refresh();
+}
+$('pairButton').onclick=pair;
+$('uploadButton').onclick=upload;
+$('pairInput').addEventListener('keydown',e=>{if(e.key==='Enter')pair()});
+if(token)refresh();else disconnect();
+setInterval(refresh,3000);
+</script></body></html>
