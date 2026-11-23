@@ -31,7 +31,8 @@ label{display:block;color:#cbd6ef;font-size:14px;margin:12px 0 6px}
 </section>
 <div id="controls" class="hidden">
 <section><h2>Now displaying</h2><div id="nowPlaying" style="font-size:17px;font-weight:650;overflow-wrap:anywhere">—</div><div id="state"></div>
-<div class="triple"><button onclick="queuePlayback('prev')">◀ Prev</button><button id="playButton" onclick="togglePlay()">Pause</button><button onclick="queuePlayback('next')">Next ▶</button></div>
+<div class="triple"><button id="prevButton" onclick="queuePlayback('prev')">◀ Prev</button><button id="playButton" onclick="togglePlay()">Pause</button><button id="nextButton" onclick="queuePlayback('next')">Next ▶</button></div>
+<p id="navigationWarning" class="muted" role="status"></p>
 </section>
 <section><h2>Display settings</h2><label>Content rotation (to match physical TV position)</label><div class="grid">
 <button data-rotation="0" class="secondary" onclick="command('rotate','0')">Normal 0°</button>
@@ -90,11 +91,20 @@ async function command(action,value,extra={}){
     notice('Rotation request not confirmed. Try again and check your TV screen.');
    } else notice('Rotation applied on TV: '+applied.rotation+'°');
   }
+  if(['prev','next','select'].includes(action)){
+   const msg=applied.lastControlMessage||'';
+   if(applied.total<2)notice('Need at least 2 playable files. TV currently sees '+applied.total+'.');
+   else if(msg)notice(msg);
+  }
  }catch(e){notice(e.message)}
  finally{pendingControls--;}
 }
 function queuePlayback(action){
  playbackQueue=playbackQueue.catch(()=>{}).then(()=>command(action));
+ return playbackQueue;
+}
+function queueSelection(index){
+ playbackQueue=playbackQueue.catch(()=>{}).then(()=>command('select',null,{index}));
  return playbackQueue;
 }
 function togglePlay(){
@@ -105,7 +115,13 @@ function toggleShuffle(){command('shuffle',!status.shuffle)}
 function render(){
  $('connection').textContent='Connected';
  $('nowPlaying').textContent=status.name||'No media loaded';
- $('state').textContent=(status.playing?'▶ Playing':'⏸ Paused')+'  ·  '+status.total+' files  ·  Rotation '+status.rotation+'°';
+ $('state').textContent=(status.playing?'▶ Playing':'⏸ Paused')+' · '+(status.total?status.position+1:0)+' / '+status.total+' files · Rotation '+status.rotation+'°';
+ const insufficient=Number(status.total)<2;
+ $('prevButton').disabled=insufficient;
+ $('nextButton').disabled=insufficient;
+ $('navigationWarning').textContent=insufficient
+    ?(status.total===0?'No playable images or videos found. Upload from your phone or choose USB folder on TV.':'Only 1 playable file found, so Next and Previous cannot switch files. Upload at least 2 images/videos.')
+    :('Use ◀/▶ to switch files or tap Show next to any item below. '+(status.shuffle?'Shuffle enabled.':'Ordered playlist.'));
  $('playButton').textContent=status.playing?'⏸ Pause':'▶ Play';
  $('shuffleButton').textContent='Shuffle: '+(status.shuffle?'On':'Off');
  $('rotationNote').textContent='TV reports: '+status.rotation+'° (display: '+(status.actualRotation??'?')+'°) · Image/video: '+(status.cover?'Fill':'Fit');
@@ -121,6 +137,10 @@ function render(){
   const text=document.createElement('div');text.className='media-name';
   text.textContent=(i===status.position?'▶  ':'')+item.name;
   const sub=document.createElement('small');sub.textContent=(item.video?'Video':'Image')+' · '+(item.uploaded?'Phone upload':'USB folder');text.append(sub);row.append(text);
+  const show=document.createElement('button');show.textContent=(i===status.position?'Shown':'Show');
+  show.className='secondary';show.disabled=i===status.position;
+  show.onclick=()=>queueSelection(i);
+  row.append(show);
   for(const [label,action,attrs] of [['↑','move',{index:i,direction:'up'}],['↓','move',{index:i,direction:'down'}]]){
    const b=document.createElement('button');b.textContent=label;b.className='secondary';
    b.onclick=()=>command(action,null,attrs);row.append(b);
