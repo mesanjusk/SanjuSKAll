@@ -31,7 +31,7 @@ label{display:block;color:#cbd6ef;font-size:14px;margin:12px 0 6px}
 </section>
 <div id="controls" class="hidden">
 <section><h2>Now displaying</h2><div id="nowPlaying" style="font-size:17px;font-weight:650;overflow-wrap:anywhere">—</div><div id="state"></div>
-<div class="triple"><button onclick="command('prev')">◀ Prev</button><button id="playButton" onclick="togglePlay()">Pause</button><button onclick="command('next')">Next ▶</button></div>
+<div class="triple"><button onclick="queuePlayback('prev')">◀ Prev</button><button id="playButton" onclick="togglePlay()">Pause</button><button onclick="queuePlayback('next')">Next ▶</button></div>
 </section>
 <section><h2>Display settings</h2><label>Content rotation (to match physical TV position)</label><div class="grid">
 <button data-rotation="0" class="secondary" onclick="command('rotate','0')">Normal 0°</button>
@@ -54,6 +54,7 @@ label{display:block;color:#cbd6ef;font-size:14px;margin:12px 0 6px}
 <script>
 const $=id=>document.getElementById(id);
 let token=localStorage.getItem('skTvToken')||'',status={};
+let pendingControls=0,playbackQueue=Promise.resolve();
 function notice(msg){const e=$('message');e.textContent=msg;e.style.display='block';setTimeout(()=>e.style.display='none',4000)}
 async function api(path,options={}){
  const headers={...(options.headers||{}),'X-Device-Token':token};
@@ -74,11 +75,12 @@ async function pair(){
 function disconnect(){token='';localStorage.removeItem('skTvToken');$('pairing').classList.remove('hidden');$('controls').classList.add('hidden');$('connection').textContent='Disconnected'}
 function showControls(){$('pairing').classList.add('hidden');$('controls').classList.remove('hidden');$('connection').textContent='Connected'}
 async function refresh(){
- if(!token)return;
+ if(!token||pendingControls>0)return;
  try{status=await api('/api/status');showControls();render();}
  catch(e){$('connection').textContent='Offline';if(token)console.log(e)}
 }
 async function command(action,value,extra={}){
+ pendingControls++;
  try{
   const applied=await api('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,value,...extra})});
   if(applied && applied.device){status=applied;render();}
@@ -89,8 +91,16 @@ async function command(action,value,extra={}){
    } else notice('Rotation applied on TV: '+applied.rotation+'°');
   }
  }catch(e){notice(e.message)}
+ finally{pendingControls--;}
 }
-function togglePlay(){command(status.playing?'pause':'play')}
+function queuePlayback(action){
+ playbackQueue=playbackQueue.catch(()=>{}).then(()=>command(action));
+ return playbackQueue;
+}
+function togglePlay(){
+ playbackQueue=playbackQueue.catch(()=>{}).then(()=>command(status.playing?'pause':'play'));
+ return playbackQueue;
+}
 function toggleShuffle(){command('shuffle',!status.shuffle)}
 function render(){
  $('connection').textContent='Connected';
