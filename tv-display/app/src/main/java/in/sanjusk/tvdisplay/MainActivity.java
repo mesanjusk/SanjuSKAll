@@ -136,7 +136,7 @@ public class MainActivity extends Activity {
         panel.addView(heading);panel.addView(details);
         addRow(panel,button("▶ Play / Pause",()->{if(playing)pause();else resume();}),
             button("◀ Previous",()->step(-1)),button("Next ▶",()->step(1)),
-            button("⟳ Rotation",()->setRotation(rotation==0?90:rotation==90?270:0)));
+            button("⟳ Rotation",()->setRotation(rotation==0?90:rotation==90?180:rotation==180?270:0)));
         addRow(panel,button("USB Folder",this::pickFolder),
             button("Fit / Fill",()->setFit(!cover)),
             button("Refresh Files",()->refresh(true)),
@@ -180,7 +180,7 @@ public class MainActivity extends Activity {
         if(root==null)return;
         int w=root.getWidth(),h=root.getHeight();
         if(w==0||h==0)return;
-        boolean turn=rotation!=0;
+        boolean turn=rotation==90||rotation==270;
         FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(turn?h:w,turn?w:h,Gravity.CENTER);
         canvas.setLayoutParams(p);
         canvas.setPivotX((turn?h:w)/2f);canvas.setPivotY((turn?w:h)/2f);
@@ -189,7 +189,7 @@ public class MainActivity extends Activity {
         updateLabels();
     }
     private void setRotation(int degrees){
-        if(degrees!=0&&degrees!=90&&degrees!=270)return;
+        if(degrees!=0&&degrees!=90&&degrees!=180&&degrees!=270)return;
         rotation=degrees;prefs.edit().putInt("rotation",degrees).apply();
         applyRotation();
     }
