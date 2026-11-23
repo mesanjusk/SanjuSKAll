@@ -42,7 +42,11 @@ public class MainActivity extends Activity {
     private static final int PICK_FOLDER=41;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final SecureRandom random=new SecureRandom();
-    private final Runnable imageAdvance=()->step(1);
+    private final Runnable imageAdvance=()->{if(playing)step(1);};
+    private final List<Integer> history=new ArrayList<>();
+    private int historyCursor=-1;
+    private long imageDeadline=0L;
+    private long imageRemainingMs=0L;
     private final Runnable autoHide=()->{if(MainActivity.this.panel!=null) MainActivity.this.panel.setVisibility(View.GONE);};
     private SharedPreferences prefs;
     private MediaLibrary library;
@@ -167,12 +171,15 @@ public class MainActivity extends Activity {
         }
     }
     void refresh(boolean start){
-        String current=playlist.isEmpty()?"":playlist.get(Math.min(position,playlist.size()-1)).key();
+        boolean wasEmpty=playlist.isEmpty();
+        String current=wasEmpty?"":playlist.get(Math.min(position,playlist.size()-1)).key();
         playlist=library.list();
+        history.clear();
+        historyCursor=-1;
         position=0;
         for(int i=0;i<playlist.size();i++) if(playlist.get(i).key().equals(current)){position=i;break;}
-        if(start || playlist.isEmpty()) playCurrent();
-        else if(playing && (video.getVisibility()!=View.VISIBLE || mediaPlayer==null)) playCurrent();
+        if(wasEmpty && !playlist.isEmpty())playing=true;
+        if(start || wasEmpty || playlist.isEmpty())playCurrent();
         updateLabels();
     }
     void mediaChanged(){runOnUiThread(()->refresh(true));}
@@ -257,8 +264,15 @@ public class MainActivity extends Activity {
         transform.setScale(mediaW*factor/vw,mediaH*factor/vh,vw/2f,vh/2f);
         video.setTransform(transform);
     }
+    private void scheduleImageAdvance(long delayMs){
+        handler.removeCallbacks(imageAdvance);
+        imageRemainingMs=Math.max(100,delayMs);
+        imageDeadline=android.os.SystemClock.uptimeMillis()+imageRemainingMs;
+        if(playing)handler.postDelayed(imageAdvance,imageRemainingMs);
+    }
     private void playCurrent(){
         handler.removeCallbacks(imageAdvance);
+        imageRemainingMs=seconds*1000L;
         releaseVideo();
         currentVideoUri=null;
         video.setVisibility(View.GONE);
@@ -268,36 +282,65 @@ public class MainActivity extends Activity {
         }
         if(position<0||position>=playlist.size())position=0;
         MediaLibrary.Item item=playlist.get(position);
-        playing=true;
+        // Changing slides must NOT cancel a user's pause.
         if(item.video){
             image.setVisibility(View.GONE);video.setVisibility(View.VISIBLE);
             currentVideoUri=item.uri;
-            if(video.isAvailable()) startVideo();
+            if(video.isAvailable())startVideo();
         }else{
             image.setVisibility(View.VISIBLE);
             try{loadImage(item.uri);}catch(Exception e){image.setImageDrawable(null);}
-            handler.postDelayed(imageAdvance,seconds*1000L);
+            scheduleImageAdvance(seconds*1000L);
         }
         updateLabels();
     }
     private void pause(){
-        playing=false;handler.removeCallbacks(imageAdvance);
-        if(video.getVisibility()==View.VISIBLE && mediaPlayer!=null && videoPrepared)mediaPlayer.pause();
+        if(!playing)return;
+        playing=false;
+        if(video.getVisibility()==View.VISIBLE){
+            if(mediaPlayer!=null && videoPrepared)try{mediaPlayer.pause();}catch(Exception ignored){}
+        }else{
+            imageRemainingMs=Math.max(100,imageDeadline-android.os.SystemClock.uptimeMillis());
+        }
+        handler.removeCallbacks(imageAdvance);
         updateLabels();
     }
     private void resume(){
-        if(playlist.isEmpty()){refresh(true);return;}
+        if(playlist.isEmpty()){
+            playing=true;
+            refresh(true);
+            return;
+        }
+        if(playing)return;
         playing=true;
-        if(video.getVisibility()==View.VISIBLE && mediaPlayer!=null && videoPrepared)mediaPlayer.start();
-        else handler.postDelayed(imageAdvance,seconds*1000L);
+        if(video.getVisibility()==View.VISIBLE){
+            if(mediaPlayer!=null && videoPrepared){
+                try{mediaPlayer.start();}catch(Exception e){startVideo();}
+            }else if(mediaPlayer==null && currentVideoUri!=null && video.isAvailable())startVideo();
+        }else{
+            scheduleImageAdvance(imageRemainingMs>0?imageRemainingMs:seconds*1000L);
+        }
         updateLabels();
     }
     private void step(int delta){
-        if(playlist.isEmpty()){refresh(true);return;}
+        if(playlist.isEmpty())return;
         if(shuffle && playlist.size()>1){
-            int next=position;
-            while(next==position)next=random.nextInt(playlist.size());
-            position=next;
+            if(delta<0 && historyCursor>0){
+                position=history.get(--historyCursor);
+            }else if(delta>0 && historyCursor<history.size()-1){
+                position=history.get(++historyCursor);
+            }else if(delta>0){
+                if(historyCursor<0){history.add(position);historyCursor=0;}
+                int next=position;
+                while(next==position)next=random.nextInt(playlist.size());
+                position=next;
+                history.add(position);
+                historyCursor++;
+                if(history.size()>1000){history.remove(0);historyCursor--;}
+            }else{
+                // No earlier shuffled item: preserve current item.
+                return;
+            }
         }else{
             position=(position+delta+playlist.size())%playlist.size();
         }
@@ -364,16 +407,20 @@ public class MainActivity extends Activity {
                 try{setRotation(Integer.parseInt(value));}catch(Exception ignored){}
                 break;
             case "duration":
-                try{seconds=Math.min(120,Math.max(2,Integer.parseInt(value)));prefs.edit().putInt("seconds",seconds).apply();if(playing&&video.getVisibility()!=View.VISIBLE){handler.removeCallbacks(imageAdvance);handler.postDelayed(imageAdvance,seconds*1000L);}}catch(Exception ignored){}
+                try{seconds=Math.min(120,Math.max(2,Integer.parseInt(value)));prefs.edit().putInt("seconds",seconds).apply();if(video.getVisibility()!=View.VISIBLE)scheduleImageAdvance(seconds*1000L);}catch(Exception ignored){}
                 break;
             case "fit":setFit("cover".equals(value));break;
-            case "shuffle":shuffle=o.optBoolean("value",false);prefs.edit().putBoolean("shuffle",shuffle).apply();break;
+            case "shuffle":
+                shuffle=o.optBoolean("value",false);
+                history.clear();historyCursor=-1;
+                prefs.edit().putBoolean("shuffle",shuffle).apply();
+                break;
             case "move":
                 int i=o.optInt("index",-1),j=i+("up".equals(o.optString("direction"))?-1:1);
                 if(i>=0&&j>=0&&i<playlist.size()&&j<playlist.size()){
                     MediaLibrary.Item active=playlist.get(position);
                     Collections.swap(playlist,i,j);library.saveOrder(playlist);
-                    position=playlist.indexOf(active);updateLabels();
+                    position=playlist.indexOf(active);history.clear();historyCursor=-1;updateLabels();
                 }
                 break;
             case "refresh":refresh(true);break;
